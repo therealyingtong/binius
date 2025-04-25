@@ -1,3 +1,5 @@
+// Copyright 2025 Irreducible Inc.
+
 use std::array;
 
 use binius_field::{packed::set_packed_slice, Field, PackedExtension, PackedField};
@@ -6,8 +8,9 @@ use itertools::izip;
 use crate::{
 	builder::{Col, TableBuilder, TableWitnessSegment, B1, B128, B32, B64},
 	gadgets::{
-		mul::{pack_fp, MulSS32, MulUU32, SignConverter, TwosComplement, UnsignedMulPrimitives},
+		mul::{MulSS32, MulUU32, SignConverter, TwosComplement, UnsignedMulPrimitives},
 		u32::{add::WideAdd, U32AddFlags},
+		util::pack_fp,
 	},
 };
 
@@ -33,6 +36,7 @@ pub struct DivUU32 {
 }
 
 impl DivUU32 {
+	#[allow(clippy::needless_range_loop)]
 	pub fn new(table: &mut TableBuilder) -> Self {
 		let zero = table.add_constant("zero", [B1::ZERO]);
 		let p_in_bits = table.add_committed_multiple("p_in_bits");
@@ -78,7 +82,10 @@ impl DivUU32 {
 		);
 
 		for bit in 0..64 {
-			table.assert_zero("division_satisfied", zero_extend_p[bit] - sum.z_out[bit]);
+			table.assert_zero(
+				format!("division_satisfied_{bit}"),
+				zero_extend_p[bit] - sum.z_out[bit],
+			);
 		}
 
 		// Add constraint to make sure that r < q by computing s = r - q in a larger bit length.
@@ -213,6 +220,7 @@ pub struct DivSS32 {
 }
 
 impl DivSS32 {
+	#[allow(clippy::needless_range_loop)]
 	pub fn new(table: &mut TableBuilder) -> Self {
 		let p_in_bits = table.add_committed_multiple("p_in_bits");
 		let q_in_bits = table.add_committed_multiple("q_in_bits");
@@ -260,7 +268,10 @@ impl DivSS32 {
 		);
 
 		for bit in 0..64 {
-			table.assert_zero("division_satisfied", sign_extend_p[bit] - sum.z_out[bit]);
+			table.assert_zero(
+				format!("division_satisfied_{bit}"),
+				sign_extend_p[bit] - sum.z_out[bit],
+			);
 		}
 
 		// Add constraint to make sure that |r| < |q| by computing s = |r| - |q| in a larger bit length.
@@ -271,8 +282,7 @@ impl DivSS32 {
 		let abs_r_bits = abs_r_value.converted_bits;
 
 		let q_is_positive = q_in_bits[31] + B1::ONE;
-		let neg_abs_q_value =
-			SignConverter::new(table, "neg_abs_q", sign_extend_q, q_is_positive.into());
+		let neg_abs_q_value = SignConverter::new(table, "neg_abs_q", sign_extend_q, q_is_positive);
 		let neg_abs_q_bits = neg_abs_q_value.converted_bits;
 
 		let sub = WideAdd::<u64, 64>::new(

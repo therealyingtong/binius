@@ -323,7 +323,6 @@ impl MulDivTestSuiteHelper for MulDiv32TestTable {
 					let got_rem = get_packed_slice(&out_rem, i).val() as i32;
 					assert!(exp_div == got_div && exp_rem == got_rem);
 				}
-				
 			}
 		};
 	}
@@ -380,7 +379,7 @@ fn test_divuu32() {
 	let allocator = Bump::new();
 	let statement = Statement {
 		boundaries: vec![],
-		table_sizes: vec![1 << 8],
+		table_sizes: vec![1 << 9],
 	};
 	let mul_div_32 = MulDiv32TestTable::new(&mut cs, MulDivType::DivUU32);
 	let test_suite = MulDivTestSuite { prove_verify: true };
@@ -395,7 +394,7 @@ fn test_divss32() {
 	let allocator = Bump::new();
 	let statement = Statement {
 		boundaries: vec![],
-		table_sizes: vec![1 << 8],
+		table_sizes: vec![1 << 9],
 	};
 	let mul_div_32 = MulDiv32TestTable::new(&mut cs, MulDivType::DivSS32);
 	let test_suite = MulDivTestSuite { prove_verify: true };
