@@ -36,6 +36,7 @@ pub struct TableBuilder<'a, F: TowerField = B128> {
 }
 
 impl<'a, F: TowerField> TableBuilder<'a, F> {
+	/// Returns a new `TableBuilder` for the given table.
 	pub fn new(table: &'a mut Table<F>) -> Self {
 		Self {
 			namespace: None,
@@ -47,6 +48,34 @@ impl<'a, F: TowerField> TableBuilder<'a, F> {
 		self.table.power_of_two_sized = true;
 	}
 
+	/// Returns a new `TableBuilder` with the specified namespace.
+	///
+	/// A namespace is a prefix that will be prepended to all column names created by this builder.
+	/// The new namespace is nested within the current builder's namespace (if any exists).
+	/// When nesting namespaces, they are joined with "::" separators, creating a hierarchical
+	/// naming structure.
+	///
+	/// # Note
+	///
+	/// This method doesn't modify the original builder. It returns a new builder that shares
+	/// the underlying table but has its own namespace configuration that builds upon the
+	/// original builder's namespace.
+	///
+	/// # Examples
+	///
+	/// ```
+	/// # use binius_m3::builder::{B128, Col, Table, TableBuilder};
+	/// let mut table = Table::<B128>::new(0, "table");
+	/// let mut tb = TableBuilder::new(&mut table);
+	///
+	/// // Create a builder with namespace "arithmetic"
+	/// let mut arithmetic_tb = tb.with_namespace("arithmetic");
+	/// let add_col: Col<B128> = arithmetic_tb.add_committed("add"); // Column name: "arithmetic::add"
+	///
+	/// // Create a nested namespace "arithmetic::mul"
+	/// let mut mul_tb = arithmetic_tb.with_namespace("mul");
+	/// let result_col: Col<B128> = mul_tb.add_committed("result"); // Column name: "arithmetic::mul::result"
+	/// ```
 	pub fn with_namespace(&mut self, namespace: impl ToString) -> TableBuilder<'_, F> {
 		TableBuilder {
 			namespace: Some(self.namespaced_name(namespace)),
@@ -54,6 +83,7 @@ impl<'a, F: TowerField> TableBuilder<'a, F> {
 		}
 	}
 
+	/// Returns the [`TableId`] of the underlying table.
 	pub fn id(&self) -> TableId {
 		self.table.id()
 	}
@@ -654,4 +684,19 @@ impl<F: TowerField> Table<F> {
 
 const fn partition_id<const V: usize>() -> usize {
 	checked_log_2(V)
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{Table, TableBuilder};
+	use crate::builder::B128;
+
+	#[test]
+	fn namespace_nesting() {
+		let mut table = Table::<B128>::new(0, "table");
+		let mut tb = TableBuilder::new(&mut table);
+		let mut tb_ns_1 = tb.with_namespace("ns1");
+		let tb_ns_2 = tb_ns_1.with_namespace("ns2");
+		assert_eq!(tb_ns_2.namespaced_name("column"), "ns1::ns2::column");
+	}
 }
