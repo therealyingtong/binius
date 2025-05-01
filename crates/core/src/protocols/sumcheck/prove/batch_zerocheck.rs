@@ -14,7 +14,7 @@ use crate::{
 	fiat_shamir::{CanSample, Challenger},
 	protocols::sumcheck::{
 		immediate_switchover_heuristic,
-		prove::{batch_sumcheck, front_loaded::BatchProver, RegularSumcheckProver, SumcheckProver},
+		prove::{front_loaded, RegularSumcheckProver, SumcheckProver},
 		zerocheck::{
 			lagrange_evals_multilinear_extension, univariatizing_reduction_claim,
 			BatchZerocheckOutput, ZerocheckRoundEvals,
@@ -176,8 +176,6 @@ where
 		bail!(Error::ClaimsOutOfOrder);
 	}
 
-	let max_n_vars = provers.last().map(|prover| prover.n_vars()).unwrap_or(0);
-
 	let max_domain_size = provers
 		.iter()
 		.map(|prover| prover.domain_size(skip_rounds))
@@ -210,21 +208,17 @@ where
 		tail_sumcheck_provers.push(tail_sumcheck_prover);
 	}
 
-	let tail_rounds = max_n_vars.saturating_sub(skip_rounds);
-	let mut tail_sumchecks = BatchProver::new_prebatched(batch_coeffs, tail_sumcheck_provers)?;
+	let tail_regular_sumcheck_prover =
+		front_loaded::BatchProver::new_prebatched(batch_coeffs, tail_sumcheck_provers)?;
 
-	let mut unskipped_challenges = Vec::with_capacity(tail_rounds);
-	for _round_no in 0..tail_rounds {
-		tail_sumchecks.send_round_proof(&mut transcript.message())?;
-
-		let challenge = transcript.sample();
-		unskipped_challenges.push(challenge);
-
-		tail_sumchecks.receive_challenge(challenge)?;
-	}
-	let mut univariatized_multilinear_evals = tail_sumchecks.finish(&mut transcript.message())?;
-
-	unskipped_challenges.reverse();
+	let BatchSumcheckOutput {
+		challenges: unskipped_challenges,
+		multilinear_evals: mut univariatized_multilinear_evals,
+	} = front_loaded::batch_prove(
+		tail_regular_sumcheck_prover,
+		transcript,
+		EvaluationOrder::HighToLow,
+	)?;
 
 	// Drop equality indicator evals prior to univariatizing reduction
 	for evals in &mut univariatized_multilinear_evals {
@@ -261,10 +255,13 @@ where
 		&backend,
 	)?;
 
+	let batch_reduction_prover =
+		front_loaded::BatchProver::new(vec![Box::new(reduction_prover)], transcript)?;
+
 	let BatchSumcheckOutput {
 		challenges: skipped_challenges,
 		multilinear_evals: mut concat_multilinear_evals,
-	} = batch_sumcheck::batch_prove(vec![reduction_prover], transcript)?;
+	} = front_loaded::batch_prove(batch_reduction_prover, transcript, EvaluationOrder::HighToLow)?;
 
 	let mut concat_multilinear_evals = concat_multilinear_evals
 		.pop()

@@ -3,7 +3,7 @@
 use std::{cmp, cmp::Ordering, collections::VecDeque, iter};
 
 use binius_field::{Field, TowerField};
-use binius_math::{evaluate_univariate, CompositionPoly};
+use binius_math::{evaluate_univariate, CompositionPoly, EvaluationOrder};
 use binius_utils::sorting::is_sorted_ascending;
 use bytes::Buf;
 
@@ -14,7 +14,9 @@ use super::{
 	RoundCoeffs, RoundProof,
 };
 use crate::{
-	fiat_shamir::CanSample, protocols::sumcheck::SumcheckClaim, transcript::TranscriptReader,
+	fiat_shamir::CanSample,
+	protocols::sumcheck::{BatchSumcheckOutput, SumcheckClaim},
+	transcript::TranscriptReader,
 };
 
 #[derive(Debug)]
@@ -143,6 +145,14 @@ where
 		})
 	}
 
+	/// Returns total number of batched sumcheck rounds
+	pub fn total_rounds(&self) -> usize {
+		self.claims
+			.back()
+			.map(|claim_with_context| claim_with_context.claim.n_vars())
+			.unwrap_or(0)
+	}
+
 	/// Returns the number of sumcheck claims that have not finished.
 	pub fn remaining_claims(&self) -> usize {
 		self.claims.len()
@@ -266,4 +276,49 @@ struct SumcheckClaimWithContext<F: Field, C> {
 	claim: SumcheckClaim<F, C>,
 	batch_coeff: F,
 	max_degree_remaining: usize,
+}
+
+/// Verifies a front-loaded batch sumcheck protocol execution.
+pub fn batch_verify<F, C, Challenger_>(
+	mut verifier: BatchVerifier<F, C>,
+	transcript: &mut crate::transcript::VerifierTranscript<Challenger_>,
+	evaluation_order: EvaluationOrder,
+) -> Result<BatchSumcheckOutput<F>, Error>
+where
+	C: Clone + CompositionPoly<F>,
+	F: TowerField,
+	Challenger_: crate::fiat_shamir::Challenger,
+{
+	let rounds_count = verifier.total_rounds();
+
+	let mut multilinear_evals = Vec::with_capacity(verifier.remaining_claims());
+	let mut challenges = Vec::with_capacity(rounds_count);
+
+	for _round_no in 0..rounds_count {
+		let mut reader = transcript.message();
+		while let Some(claim_multilinear_evals) = verifier.try_finish_claim(&mut reader)? {
+			multilinear_evals.push(claim_multilinear_evals);
+		}
+		verifier.receive_round_proof(&mut reader)?;
+
+		let challenge = transcript.sample();
+		challenges.push(challenge);
+
+		verifier.finish_round(challenge)?;
+	}
+
+	let mut reader = transcript.message();
+	while let Some(claim_multilinear_evals) = verifier.try_finish_claim(&mut reader)? {
+		multilinear_evals.push(claim_multilinear_evals);
+	}
+	verifier.finish()?;
+
+	if evaluation_order == EvaluationOrder::HighToLow {
+		challenges.reverse();
+	}
+
+	Ok(BatchSumcheckOutput {
+		challenges,
+		multilinear_evals,
+	})
 }

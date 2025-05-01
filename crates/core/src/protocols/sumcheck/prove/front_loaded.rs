@@ -3,13 +3,14 @@
 use std::{collections::VecDeque, iter};
 
 use binius_field::{Field, TowerField};
+use binius_math::EvaluationOrder;
 use binius_utils::sorting::is_sorted_ascending;
 use bytes::BufMut;
 
 use super::batch_sumcheck::SumcheckProver;
 use crate::{
 	fiat_shamir::CanSample,
-	protocols::sumcheck::{Error, RoundCoeffs},
+	protocols::sumcheck::{BatchSumcheckOutput, Error, RoundCoeffs},
 	transcript::TranscriptWriter,
 };
 
@@ -56,6 +57,17 @@ where
 		let batch_coeffs = transcript.sample_vec(provers.len());
 
 		Self::new_prebatched(batch_coeffs, provers)
+	}
+
+	/// Returns total number of batched sumcheck rounds
+	pub fn total_rounds(&self) -> usize
+	where
+		Prover: SumcheckProver<F>,
+	{
+		self.provers
+			.back()
+			.map(|(prover, _)| prover.n_vars())
+			.unwrap_or(0)
 	}
 
 	/// Constructs a new prover for the front-loaded batched sumcheck with
@@ -152,4 +164,37 @@ where
 
 		Ok(self.multilinear_evals)
 	}
+}
+
+/// Proves a front-loaded batch sumcheck protocol execution.
+pub fn batch_prove<
+	F: TowerField,
+	P: SumcheckProver<F>,
+	Challenger_: crate::fiat_shamir::Challenger,
+>(
+	mut prover: BatchProver<F, P>,
+	transcript: &mut crate::transcript::ProverTranscript<Challenger_>,
+	evaluation_order: EvaluationOrder,
+) -> Result<BatchSumcheckOutput<F>, Error> {
+	let round_count = prover.total_rounds();
+
+	let mut challenges = Vec::with_capacity(round_count);
+	for _round_no in 0..round_count {
+		prover.send_round_proof(&mut transcript.message())?;
+
+		let challenge = transcript.sample();
+		challenges.push(challenge);
+
+		prover.receive_challenge(challenge)?;
+	}
+	let multilinear_evals = prover.finish(&mut transcript.message())?;
+
+	if evaluation_order == EvaluationOrder::HighToLow {
+		challenges.reverse();
+	}
+
+	Ok(BatchSumcheckOutput {
+		challenges,
+		multilinear_evals,
+	})
 }

@@ -10,7 +10,7 @@ use crate::{
 	oracle::MultilinearOracleSet,
 	protocols::{
 		evalcheck::{EvalcheckMultilinearClaim, EvalcheckVerifier},
-		sumcheck::{self, batch_verify, constraint_set_sumcheck_claims, SumcheckClaimsWithMeta},
+		sumcheck::{self, constraint_set_sumcheck_claims, front_loaded, SumcheckClaimsWithMeta},
 	},
 	transcript::VerifierTranscript,
 };
@@ -39,7 +39,9 @@ where
 		}
 
 		// Reduce the new sumcheck claims for virtual polynomial openings to new evalcheck claims.
-		let sumcheck_output = batch_verify(EvaluationOrder::HighToLow, &claims, transcript)?;
+		let tail_verifier = front_loaded::BatchVerifier::new(&claims, transcript)?;
+		let sumcheck_output =
+			front_loaded::batch_verify(tail_verifier, transcript, EvaluationOrder::HighToLow)?;
 
 		let new_evalcheck_claims =
 			sumcheck::make_eval_claims(EvaluationOrder::HighToLow, metas, sumcheck_output)?;
