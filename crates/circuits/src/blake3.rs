@@ -5,6 +5,7 @@ use binius_core::oracle::{OracleId, ShiftVariant};
 use binius_field::{BinaryField1b, BinaryField32b, Field, TowerField};
 use binius_macros::arith_expr;
 use binius_utils::checked_arithmetics::log2_ceil_usize;
+use rand::Rng;
 
 use crate::{
 	arithmetic::u32::LOG_U32_BITS,
@@ -54,6 +55,93 @@ pub struct Blake3CompressState {
 	pub counter_high: u32,
 	pub block_len: u32,
 	pub flags: u32,
+}
+
+impl Blake3CompressState {
+	pub fn random(block: [u32; 16], rng: &mut impl Rng) -> Self {
+		let cv: [u32; 8] = std::array::from_fn(|_| rng.gen::<u32>());
+		let counter = rng.gen::<u64>();
+		let counter_low = counter as u32;
+		let counter_high = (counter >> 32) as u32;
+		let block_len = rng.gen::<u32>();
+		let flags = rng.gen::<u32>();
+
+		Self {
+			cv,
+			block,
+			counter_low,
+			counter_high,
+			block_len,
+			flags,
+		}
+	}
+
+	// taken (and slightly refactored) from reference Blake3 implementation:
+	// https://github.com/BLAKE3-team/BLAKE3/blob/master/reference_impl/reference_impl.rs
+	pub fn compress(&self) -> [u32; 16] {
+		#[rustfmt::skip]
+    let mut state = [
+        self.cv[0], self.cv[1], self.cv[2], self.cv[3],
+        self.cv[4], self.cv[5], self.cv[6], self.cv[7],
+        IV[0],             IV[1],             IV[2],             IV[3],
+        self.counter_low,       self.counter_high,      self.block_len,         self.flags,
+		self.block[0], self.block[1], self.block[2], self.block[3],
+		self.block[4], self.block[5], self.block[6], self.block[7],
+		self.block[8], self.block[9], self.block[10], self.block[11],
+		self.block[12], self.block[13], self.block[14], self.block[15],
+    ];
+
+		let a = [0, 1, 2, 3, 0, 1, 2, 3];
+		let b = [4, 5, 6, 7, 5, 6, 7, 4];
+		let c = [8, 9, 10, 11, 10, 11, 8, 9];
+		let d = [12, 13, 14, 15, 15, 12, 13, 14];
+		let mx = [16, 18, 20, 22, 24, 26, 28, 30];
+		let my = [17, 19, 21, 23, 25, 27, 29, 31];
+
+		// we have 7 rounds in total
+		for round_idx in 0..7 {
+			for j in 0..8 {
+				let a_in = state[a[j]];
+				let b_in = state[b[j]];
+				let c_in = state[c[j]];
+				let d_in = state[d[j]];
+				let mx_in = state[mx[j]];
+				let my_in = state[my[j]];
+
+				let a_0 = a_in.wrapping_add(b_in).wrapping_add(mx_in);
+				let d_0 = (d_in ^ a_0).rotate_right(16);
+				let c_0 = c_in.wrapping_add(d_0);
+				let b_0 = (b_in ^ c_0).rotate_right(12);
+
+				let a_1 = a_0.wrapping_add(b_0).wrapping_add(my_in);
+				let d_1 = (d_0 ^ a_1).rotate_right(8);
+				let c_1 = c_0.wrapping_add(d_1);
+				let b_1 = (b_0 ^ c_1).rotate_right(7);
+
+				state[a[j]] = a_1;
+				state[b[j]] = b_1;
+				state[c[j]] = c_1;
+				state[d[j]] = d_1;
+			}
+
+			// execute permutation for the 6 first rounds
+			if round_idx < 6 {
+				let mut permuted = [0; 16];
+				for i in 0..16 {
+					permuted[i] = state[16 + MSG_PERMUTATION[i]];
+				}
+				state[16..32].copy_from_slice(&permuted);
+			}
+		}
+
+		for i in 0..8 {
+			state[i] ^= state[i + 8];
+			state[i + 8] ^= self.cv[i];
+		}
+
+		let state_out: [u32; 16] = std::array::from_fn(|i| state[i]);
+		state_out
+	}
 }
 
 pub struct Blake3CompressOracles {
@@ -509,82 +597,6 @@ mod tests {
 		blake3::{blake3_compress, Blake3CompressState, F32, IV, MSG_PERMUTATION},
 		builder::test_utils::test_circuit,
 	};
-
-	// taken (and slightly refactored) from reference Blake3 implementation:
-	// https://github.com/BLAKE3-team/BLAKE3/blob/master/reference_impl/reference_impl.rs
-	fn compress(
-		chaining_value: &[u32; 8],
-		block_words: &[u32; 16],
-		counter: u64,
-		block_len: u32,
-		flags: u32,
-	) -> [u32; 16] {
-		let counter_low = counter as u32;
-		let counter_high = (counter >> 32) as u32;
-
-		#[rustfmt::skip]
-    let mut state = [
-        chaining_value[0], chaining_value[1], chaining_value[2], chaining_value[3],
-        chaining_value[4], chaining_value[5], chaining_value[6], chaining_value[7],
-        IV[0],             IV[1],             IV[2],             IV[3],
-        counter_low,       counter_high,      block_len,         flags,
-		block_words[0], block_words[1], block_words[2], block_words[3],
-		block_words[4], block_words[5], block_words[6], block_words[7],
-		block_words[8], block_words[9], block_words[10], block_words[11],
-		block_words[12], block_words[13], block_words[14], block_words[15],
-    ];
-
-		let a = [0, 1, 2, 3, 0, 1, 2, 3];
-		let b = [4, 5, 6, 7, 5, 6, 7, 4];
-		let c = [8, 9, 10, 11, 10, 11, 8, 9];
-		let d = [12, 13, 14, 15, 15, 12, 13, 14];
-		let mx = [16, 18, 20, 22, 24, 26, 28, 30];
-		let my = [17, 19, 21, 23, 25, 27, 29, 31];
-
-		// we have 7 rounds in total
-		for round_idx in 0..7 {
-			for j in 0..8 {
-				let a_in = state[a[j]];
-				let b_in = state[b[j]];
-				let c_in = state[c[j]];
-				let d_in = state[d[j]];
-				let mx_in = state[mx[j]];
-				let my_in = state[my[j]];
-
-				let a_0 = a_in.wrapping_add(b_in).wrapping_add(mx_in);
-				let d_0 = (d_in ^ a_0).rotate_right(16);
-				let c_0 = c_in.wrapping_add(d_0);
-				let b_0 = (b_in ^ c_0).rotate_right(12);
-
-				let a_1 = a_0.wrapping_add(b_0).wrapping_add(my_in);
-				let d_1 = (d_0 ^ a_1).rotate_right(8);
-				let c_1 = c_0.wrapping_add(d_1);
-				let b_1 = (b_0 ^ c_1).rotate_right(7);
-
-				state[a[j]] = a_1;
-				state[b[j]] = b_1;
-				state[c[j]] = c_1;
-				state[d[j]] = d_1;
-			}
-
-			// execute permutation for the 6 first rounds
-			if round_idx < 6 {
-				let mut permuted = [0; 16];
-				for i in 0..16 {
-					permuted[i] = state[16 + MSG_PERMUTATION[i]];
-				}
-				state[16..32].copy_from_slice(&permuted);
-			}
-		}
-
-		for i in 0..8 {
-			state[i] ^= state[i + 8];
-			state[i + 8] ^= chaining_value[i];
-		}
-
-		let state_out: [u32; 16] = std::array::from_fn(|i| state[i]);
-		state_out
-	}
 
 	#[test]
 	fn test_blake3_compression() {

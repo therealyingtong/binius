@@ -25,6 +25,11 @@ itertools.workspace = true
 rand.workspace = true
 tracing-profile.workspace = true
 tracing.workspace = true
+criterion.workspace = true
+
+[[example]]
+name = "garble"
+path = "garble.rs"
 
 [[example]]
 name = "keccak"
@@ -89,6 +94,10 @@ path = "blake3_circuit.rs"
 [[example]]
 name = "u32_mul_gkr"
 path = "u32_mul_gkr.rs"
+
+[[bench]]
+name = "garble"
+harness = false
 
 [features]
 default = ["rayon", "nightly_features"]

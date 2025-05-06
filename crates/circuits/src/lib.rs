@@ -13,6 +13,7 @@ pub mod bitwise;
 pub mod blake3;
 pub mod builder;
 pub mod collatz;
+pub mod garble;
 pub mod keccakf;
 pub mod lasso;
 mod pack;
